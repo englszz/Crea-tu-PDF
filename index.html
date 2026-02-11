@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generador de PDF para Tareas UASD</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        form { display: flex; flex-direction: column; gap: 10px; }
+        label { font-weight: bold; }
+        input, textarea { padding: 8px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+        #imagenes-preview { display: flex; flex-wrap: wrap; gap: 10px; }
+        .preview-img { max-width: 200px; height: auto; border: 1px solid #ddd; }
+        button { padding: 10px; background-color: #4CAF50; color: white; border: none; cursor: pointer; }
+        button:hover { background-color: #45a049; }
+        @media (max-width: 600px) {
+            body { padding: 10px; }
+            .preview-img { max-width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <h1>Generador de PDF para Tareas UASD</h1>
+    <form id="formulario">
+        <label for="nombre">Nombre:</label>
+        <input type="text" id="nombre">
+
+        <label for="matricula">Matrícula:</label>
+        <input type="text" id="matricula">
+
+        <label for="profesor">Profesor:</label>
+        <input type="text" id="profesor">
+
+        <label for="seccion">Sección:</label>
+        <input type="text" id="seccion">
+
+        <label for="asignatura">Asignatura:</label>
+        <input type="text" id="asignatura">
+
+        <label for="tema">Tema (puede ser largo, usa enters):</label>
+        <textarea id="tema" rows="4"></textarea>
+
+        <!-- NUEVO CAMPO PARA EL NOMBRE DEL ARCHIVO -->
+        <label for="nombreTrabajo">Nombre del trabajo (para el archivo PDF):</label>
+        <input type="text" id="nombreTrabajo" placeholder="Ej: Massiel-Fisica-Proyecto">
+
+        <label for="imagenes">Agregar Imágenes (puedes agregar una por una o múltiples):</label>
+        <input type="file" id="imagenes" multiple accept="image/*">
+
+        <div id="imagenes-preview"></div>
+
+        <button type="button" id="generar-pdf">Generar y Descargar PDF</button>
+    </form>
+
+    <script>
+        const imagenesInput = document.getElementById('imagenes');
+        const previewDiv = document.getElementById('imagenes-preview');
+        let images = [];
+
+        imagenesInput.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files);
+            files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const imgData = event.target.result;
+                    images.push(imgData);
+                    const img = document.createElement('img');
+                    img.src = imgData;
+                    img.classList.add('preview-img');
+                    previewDiv.appendChild(img);
+                };
+                reader.readAsDataURL(file);
+            });
+            imagenesInput.value = '';
+        });
+
+        async function crearPDF() {
+            const { jsPDF } = window.jspdf;
+            if (!jsPDF) {
+                alert('Error: jsPDF no está cargado.');
+                return;
+            }
+
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const pageWidth = 210;
+            const center = pageWidth / 2;
+            let y = 40;
+
+            // Logo con proporciones correctas
+            try {
+                const logo = await loadImage('uasd.png');
+                const logoWidth = 90;
+                const aspectRatio = logo.naturalWidth / logo.naturalHeight;
+                const logoHeight = logoWidth / aspectRatio;
+                const logoX = (pageWidth - logoWidth) / 2;
+                pdf.addImage(logo, 'PNG', logoX, 20, logoWidth, logoHeight);
+                y = 20 + logoHeight + 10;
+            } catch (err) {
+                console.warn('No se pudo cargar el logo uasd.png:', err);
+                y = 40;
+            }
+
+            pdf.setFont('times');
+            pdf.setFontSize(14);
+
+            function escribir(label, value) {
+                if (!value || value.trim() === '') return;
+                const texto = `${label}: ${value}`;
+                pdf.text(texto, center, y, { align: 'center' });
+                y += 10;
+            }
+
+            escribir('Nombre', document.getElementById('nombre').value);
+            escribir('Matrícula', document.getElementById('matricula').value);
+            escribir('Profesor', document.getElementById('profesor').value);
+            escribir('Sección', document.getElementById('seccion').value);
+            escribir('Asignatura', document.getElementById('asignatura').value);
+
+            const temaValue = document.getElementById('tema').value;
+            if (temaValue && temaValue.trim() !== '') {
+                pdf.setFontSize(13);
+                const lineas = pdf.splitTextToSize('Tema: ' + temaValue, 170);
+                pdf.text(lineas, center, y, { align: 'center' });
+                y += lineas.length * 7;
+            }
+
+            for (let imgData of images) {
+                try {
+                    pdf.addPage();
+                    const img = await loadImage(imgData);
+                    let imgWidth = img.naturalWidth;
+                    let imgHeight = img.naturalHeight;
+                    const maxWidth = 180;
+                    const maxHeight = 250;
+                    const ratio = imgWidth / imgHeight;
+
+                    if (imgWidth > maxWidth) {
+                        imgWidth = maxWidth;
+                        imgHeight = imgWidth / ratio;
+                    }
+                    if (imgHeight > maxHeight) {
+                        imgHeight = maxHeight;
+                        imgWidth = imgHeight * ratio;
+                    }
+
+                    const imgX = (pageWidth - imgWidth) / 2;
+                    pdf.addImage(img, 'JPEG', imgX, 20, imgWidth, imgHeight);
+                } catch (err) {
+                    console.error('Error al agregar imagen:', err);
+                }
+            }
+
+            // NOMBRE DEL ARCHIVO PERSONALIZADO
+            let nombreArchivo = document.getElementById('nombreTrabajo').value.trim();
+            if (!nombreArchivo) {
+                nombreArchivo = 'tarea_uasd';
+            }
+            // Limpiar caracteres no válidos en nombres de archivo y agregar .pdf
+            nombreArchivo = nombreArchivo.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s-]/g, '_');
+            if (!nombreArchivo.toLowerCase().endsWith('.pdf')) {
+                nombreArchivo += '.pdf';
+            }
+
+            try {
+                pdf.save(nombreArchivo);
+                console.log('PDF descargado como:', nombreArchivo);
+            } catch (err) {
+                console.error('Error al descargar PDF:', err);
+                alert('No se pudo descargar el PDF. Revisa la consola.');
+            }
+        }
+
+        function loadImage(src) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => resolve(img);
+                img.onerror = () => reject(new Error(`No se pudo cargar: ${src}`));
+                img.src = src;
+                setTimeout(() => reject(new Error('Timeout')), 5000);
+            });
+        }
+
+        document.getElementById('generar-pdf').addEventListener('click', async () => {
+            await crearPDF();
+        });
+    </script>
+</body>
+</html>
