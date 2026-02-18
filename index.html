@@ -131,21 +131,28 @@
                     const img = await loadImage(imgData);
                     let imgWidth = img.naturalWidth;
                     let imgHeight = img.naturalHeight;
+
                     const maxWidth = 180;
                     const maxHeight = 250;
                     const ratio = imgWidth / imgHeight;
 
+                    // Ajustar al ancho máximo primero
                     if (imgWidth > maxWidth) {
                         imgWidth = maxWidth;
                         imgHeight = imgWidth / ratio;
                     }
+                    // Si aún así se pasa del alto máximo, ajustar por alto
                     if (imgHeight > maxHeight) {
                         imgHeight = maxHeight;
                         imgWidth = imgHeight * ratio;
                     }
 
+                    // Centrar horizontal y verticalmente en la página
                     const imgX = (pageWidth - imgWidth) / 2;
-                    pdf.addImage(img, 'JPEG', imgX, 20, imgWidth, imgHeight);
+                    const pageHeight = 297; // A4 en mm
+                    const imgY = (pageHeight - imgHeight) / 2;
+
+                    pdf.addImage(img, 'JPEG', imgX, imgY, imgWidth, imgHeight);
                 } catch (err) {
                     console.error('Error al agregar imagen:', err);
                 }
