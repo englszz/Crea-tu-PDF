@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Generador de PDF para Tareas UASD</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.js"></script>
     <style>
         body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
         form { display: flex; flex-direction: column; gap: 10px; }
@@ -42,7 +41,6 @@
         <label for="tema">Tema (puede ser largo, usa enters):</label>
         <textarea id="tema" rows="4"></textarea>
 
-        <!-- NUEVO CAMPO PARA EL NOMBRE DEL ARCHIVO -->
         <label for="nombreTrabajo">Nombre del trabajo (para el archivo PDF):</label>
         <input type="text" id="nombreTrabajo" placeholder="Ej: Massiel-Fisica-Proyecto">
 
@@ -57,7 +55,7 @@
     <script>
         const imagenesInput = document.getElementById('imagenes');
         const previewDiv = document.getElementById('imagenes-preview');
-        let images = []; // cada elemento: { data: base64, file: File }
+        let images = []; // { data: base64dataURL, file: File }
 
         imagenesInput.addEventListener('change', (e) => {
             const files = Array.from(e.target.files);
@@ -76,25 +74,72 @@
             imagenesInput.value = '';
         });
 
-        // Lee la orientación EXIF de un File y devuelve el valor (1-8) o 1 si no hay
-        function getExifOrientation(file) {
+        /**
+         * Lee la orientación EXIF directamente de los bytes del archivo JPEG.
+         * No depende de librerías externas. Devuelve 1-8, o 1 si no encuentra.
+         */
+        function readExifOrientation(file) {
             return new Promise((resolve) => {
-                EXIF.getData(file, function() {
-                    const orientation = EXIF.getTag(this, 'Orientation');
-                    resolve(orientation || 1);
-                });
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const view = new DataView(e.target.result);
+                        if (view.getUint16(0, false) !== 0xFFD8) { resolve(1); return; }
+                        let offset = 2;
+                        while (offset < view.byteLength) {
+                            const marker = view.getUint16(offset, false);
+                            offset += 2;
+                            if (marker === 0xFFE1) {
+                                if (view.getUint32(offset + 2, false) !== 0x45786966) { resolve(1); return; }
+                                const little = view.getUint16(offset + 10, false) === 0x4949;
+                                offset += 10;
+                                const ifdOffset = view.getUint32(offset + 4, little);
+                                const entries = view.getUint16(offset + ifdOffset, little);
+                                for (let i = 0; i < entries; i++) {
+                                    const tag = view.getUint16(offset + ifdOffset + 2 + i * 12, little);
+                                    if (tag === 0x0112) {
+                                        resolve(view.getUint16(offset + ifdOffset + 2 + i * 12 + 8, little));
+                                        return;
+                                    }
+                                }
+                                resolve(1); return;
+                            } else if ((marker & 0xFF00) !== 0xFF00) {
+                                break;
+                            } else {
+                                offset += view.getUint16(offset, false);
+                            }
+                        }
+                        resolve(1);
+                    } catch { resolve(1); }
+                };
+                reader.readAsArrayBuffer(file);
             });
         }
 
-        // Corrige la imagen según la orientación EXIF usando un canvas y devuelve dataURL
-        function fixOrientation(imgEl, orientation) {
+        /**
+         * Obtiene la imagen con orientación corregida usando createImageBitmap
+         * con { imageOrientation: 'none' } para evitar que el browser auto-corrija,
+         * y luego aplica la transformación correcta en canvas.
+         */
+        async function getCorrectImageDataURL(file, exifOrientation) {
+            let bitmap;
+            try {
+                // imageOrientation:'none' = píxeles crudos, sin auto-corrección del browser
+                bitmap = await createImageBitmap(file, { imageOrientation: 'none' });
+            } catch {
+                // Fallback para browsers sin soporte de imageOrientation
+                const url = URL.createObjectURL(file);
+                bitmap = await loadImage(url);
+                URL.revokeObjectURL(url);
+            }
+
+            const w = bitmap.width || bitmap.naturalWidth;
+            const h = bitmap.height || bitmap.naturalHeight;
+
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            const w = imgEl.naturalWidth;
-            const h = imgEl.naturalHeight;
 
-            // Orientaciones 5-8 implican rotación de 90/270 → ancho y alto se intercambian
-            if ([5, 6, 7, 8].includes(orientation)) {
+            if ([5, 6, 7, 8].includes(exifOrientation)) {
                 canvas.width = h;
                 canvas.height = w;
             } else {
@@ -103,65 +148,32 @@
             }
 
             ctx.save();
-            switch (orientation) {
-                case 2:
-                    // Flip horizontal
-                    ctx.translate(w, 0);
-                    ctx.scale(-1, 1);
-                    break;
-                case 3:
-                    // Rotar 180°
-                    ctx.translate(w, h);
-                    ctx.rotate(Math.PI);
-                    break;
-                case 4:
-                    // Flip vertical
-                    ctx.translate(0, h);
-                    ctx.scale(1, -1);
-                    break;
-                case 5:
-                    // Rotar 90° CCW + flip horizontal
-                    ctx.rotate(-0.5 * Math.PI);
-                    ctx.scale(-1, 1);
-                    break;
-                case 6:
-                    // iPhone foto normal → rotar 90° CW
-                    ctx.translate(h, 0);
-                    ctx.rotate(0.5 * Math.PI);
-                    break;
-                case 7:
-                    // Rotar 90° CW + flip horizontal
-                    ctx.translate(h, w);
-                    ctx.rotate(0.5 * Math.PI);
-                    ctx.scale(-1, 1);
-                    break;
-                case 8:
-                    // Rotar 90° CCW
-                    ctx.translate(0, w);
-                    ctx.rotate(-0.5 * Math.PI);
-                    break;
-                default:
-                    // Orientación 1 o sin EXIF → sin transformación
-                    break;
+            switch (exifOrientation) {
+                case 2: ctx.translate(w, 0);  ctx.scale(-1, 1);             break;
+                case 3: ctx.translate(w, h);  ctx.rotate(Math.PI);          break;
+                case 4: ctx.translate(0, h);  ctx.scale(1, -1);             break;
+                case 5: ctx.translate(h, 0);  ctx.rotate(0.5 * Math.PI);   ctx.scale(1, -1); break;
+                case 6: ctx.translate(h, 0);  ctx.rotate(0.5 * Math.PI);   break;
+                case 7: ctx.translate(0, w);  ctx.rotate(-0.5 * Math.PI);  ctx.scale(1, -1); break;
+                case 8: ctx.translate(0, w);  ctx.rotate(-0.5 * Math.PI);  break;
+                default: break;
             }
-            ctx.drawImage(imgEl, 0, 0);
+            ctx.drawImage(bitmap, 0, 0);
             ctx.restore();
+
             return canvas.toDataURL('image/jpeg', 0.92);
         }
 
         async function crearPDF() {
             const { jsPDF } = window.jspdf;
-            if (!jsPDF) {
-                alert('Error: jsPDF no está cargado.');
-                return;
-            }
+            if (!jsPDF) { alert('Error: jsPDF no está cargado.'); return; }
 
             const pdf = new jsPDF('p', 'mm', 'a4');
             const pageWidth = 210;
+            const pageHeight = 297;
             const center = pageWidth / 2;
             let y = 40;
 
-            // Logo con proporciones correctas
             try {
                 const logo = await loadImage('uasd.png');
                 const logoWidth = 90;
@@ -180,8 +192,7 @@
 
             function escribir(label, value) {
                 if (!value || value.trim() === '') return;
-                const texto = `${label}: ${value}`;
-                pdf.text(texto, center, y, { align: 'center' });
+                pdf.text(`${label}: ${value}`, center, y, { align: 'center' });
                 y += 10;
             }
 
@@ -203,15 +214,14 @@
                 try {
                     pdf.addPage();
 
-                    // 1. Cargar la imagen original
-                    const img = await loadImage(imgEntry.data);
+                    // 1. Leer orientación EXIF directo de los bytes (sin browser en medio)
+                    const orientation = await readExifOrientation(imgEntry.file);
 
-                    // 2. Leer orientación EXIF y corregir con canvas
-                    const orientation = await getExifOrientation(imgEntry.file);
-                    const correctedData = fixOrientation(img, orientation);
+                    // 2. Corregir orientación en canvas usando píxeles crudos
+                    const correctedDataURL = await getCorrectImageDataURL(imgEntry.file, orientation);
 
-                    // 3. Cargar la imagen ya corregida
-                    const correctedImg = await loadImage(correctedData);
+                    // 3. Cargar imagen corregida y añadir al PDF
+                    const correctedImg = await loadImage(correctedDataURL);
                     let imgWidth = correctedImg.naturalWidth;
                     let imgHeight = correctedImg.naturalHeight;
 
@@ -219,17 +229,10 @@
                     const maxHeight = 250;
                     const ratio = imgWidth / imgHeight;
 
-                    if (imgWidth > maxWidth) {
-                        imgWidth = maxWidth;
-                        imgHeight = imgWidth / ratio;
-                    }
-                    if (imgHeight > maxHeight) {
-                        imgHeight = maxHeight;
-                        imgWidth = imgHeight * ratio;
-                    }
+                    if (imgWidth > maxWidth) { imgWidth = maxWidth; imgHeight = imgWidth / ratio; }
+                    if (imgHeight > maxHeight) { imgHeight = maxHeight; imgWidth = imgHeight * ratio; }
 
                     const imgX = (pageWidth - imgWidth) / 2;
-                    const pageHeight = 297;
                     const imgY = (pageHeight - imgHeight) / 2;
 
                     pdf.addImage(correctedImg, 'JPEG', imgX, imgY, imgWidth, imgHeight);
@@ -238,20 +241,13 @@
                 }
             }
 
-            // NOMBRE DEL ARCHIVO PERSONALIZADO
             let nombreArchivo = document.getElementById('nombreTrabajo').value.trim();
-            if (!nombreArchivo) {
-                nombreArchivo = 'tarea_uasd';
-            }
-            // Limpiar caracteres no válidos en nombres de archivo y agregar .pdf
+            if (!nombreArchivo) nombreArchivo = 'tarea_uasd';
             nombreArchivo = nombreArchivo.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s-]/g, '_');
-            if (!nombreArchivo.toLowerCase().endsWith('.pdf')) {
-                nombreArchivo += '.pdf';
-            }
+            if (!nombreArchivo.toLowerCase().endsWith('.pdf')) nombreArchivo += '.pdf';
 
             try {
                 pdf.save(nombreArchivo);
-                console.log('PDF descargado como:', nombreArchivo);
             } catch (err) {
                 console.error('Error al descargar PDF:', err);
                 alert('No se pudo descargar el PDF. Revisa la consola.');
