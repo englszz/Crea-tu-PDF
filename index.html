@@ -102,18 +102,50 @@
                 canvas.height = h;
             }
 
+            ctx.save();
             switch (orientation) {
-                case 2: ctx.transform(-1, 0, 0, 1, w, 0); break;
-                case 3: ctx.transform(-1, 0, 0, -1, w, h); break;
-                case 4: ctx.transform(1, 0, 0, -1, 0, h); break;
-                case 5: ctx.transform(0, 1, 1, 0, 0, 0); break;
-                case 6: ctx.transform(0, 1, -1, 0, h, 0); break;
-                case 7: ctx.transform(0, -1, -1, 0, h, w); break;
-                case 8: ctx.transform(0, -1, 1, 0, 0, w); break;
-                default: break; // orientación 1, sin transformación
+                case 2:
+                    // Flip horizontal
+                    ctx.translate(w, 0);
+                    ctx.scale(-1, 1);
+                    break;
+                case 3:
+                    // Rotar 180°
+                    ctx.translate(w, h);
+                    ctx.rotate(Math.PI);
+                    break;
+                case 4:
+                    // Flip vertical
+                    ctx.translate(0, h);
+                    ctx.scale(1, -1);
+                    break;
+                case 5:
+                    // Rotar 90° CCW + flip horizontal
+                    ctx.rotate(-0.5 * Math.PI);
+                    ctx.scale(-1, 1);
+                    break;
+                case 6:
+                    // iPhone foto normal → rotar 90° CW
+                    ctx.translate(h, 0);
+                    ctx.rotate(0.5 * Math.PI);
+                    break;
+                case 7:
+                    // Rotar 90° CW + flip horizontal
+                    ctx.translate(h, w);
+                    ctx.rotate(0.5 * Math.PI);
+                    ctx.scale(-1, 1);
+                    break;
+                case 8:
+                    // Rotar 90° CCW
+                    ctx.translate(0, w);
+                    ctx.rotate(-0.5 * Math.PI);
+                    break;
+                default:
+                    // Orientación 1 o sin EXIF → sin transformación
+                    break;
             }
-
             ctx.drawImage(imgEl, 0, 0);
+            ctx.restore();
             return canvas.toDataURL('image/jpeg', 0.92);
         }
 
